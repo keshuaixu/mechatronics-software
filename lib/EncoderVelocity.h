@@ -52,6 +52,7 @@ protected:
     AmpIO_UInt32 qtrPeriodMax;   // Maximum Qtr1 or Qtr5 period
     AmpIO_UInt32 runPeriod;      // Time since last encoder edge, Firmware V4,5,7+
     bool runOverflow;            // Running counter overflow, V7+
+    bool isESCCEncoder;          // True if the encoder is counted on ESCC. Velocity is computed on ESPM with DP. No access to high res timing information. "Period" field is actually DP. V7+
 
 public:
     EncoderVelocity() { Init(); }

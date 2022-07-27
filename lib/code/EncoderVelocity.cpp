@@ -39,6 +39,7 @@ const AmpIO_UInt32 ENC_DIR_CHANGE_MASK = 0x20000000;  /*!< Mask for encoder velo
 const double VEL_PERD               = 1.0/49152000;   /* Clock period for velocity measurements (Rev 7+ firmware) */
 const double VEL_PERD_REV6          = 1.0/3072000;    /* Slower clock for velocity measurements (Rev 6 firmware) */
 const double VEL_PERD_OLD           = 1.0/768000;     /* Slower clock for velocity measurements (prior to Rev 6 firmware) */
+const double VEL_ESCC_FREQ          = 100.0;   /* Frequency of encoder signal (Rev 7+ firmware) */
 
 void EncoderVelocity::Init()
 {
@@ -61,6 +62,7 @@ void EncoderVelocity::Init()
     qtrPeriodMax = 0;
     runPeriod = 0;
     runOverflow = false;
+    isESCCEncoder = false;
 }
 
 // SetData for Firmware V7+
@@ -87,6 +89,7 @@ void EncoderVelocity::SetData(AmpIO_UInt32 rawPeriod, AmpIO_UInt32 rawQtr1, AmpI
     qtr5Edges = (rawQtr5>>26)&0x0f;
     runPeriod = rawRun & ENC_VEL_QTR_MASK;
     runOverflow = rawRun & ENC_VEL_OVER_MASK;
+    isESCCEncoder = (rawPeriod >> 26) & 1;
 }
 
 // SetData for Firmware Rev 6
@@ -164,6 +167,10 @@ void EncoderVelocity::SetDataOld(AmpIO_UInt32 rawPeriod, bool useRunCounter)
 // Returns encoder velocity in counts/sec -> 4/period
 double EncoderVelocity::GetEncoderVelocity() const
 {
+    if (isESCCEncoder) {
+        AmpIO_Int32 dp = static_cast<AmpIO_Int32>(velPeriod << 6) >> 6;
+        return dp * VEL_ESCC_FREQ;
+    }
     AmpIO_UInt32 delta = 0;
     // Avoid divide by 0 (should never happen)
     if (velPeriod == 0) delta = 1;
@@ -182,6 +189,9 @@ double EncoderVelocity::GetEncoderVelocity() const
 // acceleration and running counter.
 double EncoderVelocity::GetEncoderVelocityPredicted(double percent_threshold) const
 {
+    if (isESCCEncoder) {
+        return GetEncoderVelocity();
+    }
     double encVel = GetEncoderVelocity();
     double encAcc = GetEncoderAcceleration(percent_threshold);
     // The encoder measurement delay is half the measured period, based on the assumption that measuring the
