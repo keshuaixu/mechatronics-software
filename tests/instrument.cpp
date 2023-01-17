@@ -22,6 +22,9 @@
 #include <fstream>
 
 #include <Amp1394/AmpIORevision.h>
+#include "Amp1394Time.h"
+#include <chrono>
+
 #if Amp1394_HAS_RAW1394
 #include "FirewirePort.h"
 #endif
@@ -107,65 +110,73 @@ int main(int argc, char** argv)
     }
     AmpIO Board(board);
     Port->AddBoard(&Board);
+    const size_t read_len = 0xffffff;
+    static uint16_t flash_data[read_len];
+    auto start = std::chrono::steady_clock::now();
+    std::ofstream file("espm_flash_dump.bin", std::ios::binary|std::ios::out|std::ios::in);
+    for (size_t i=0; i < read_len; i+=0x100) {
+        quadlet_t flash_command = (1 << 24) | i ;
+        Port->WriteQuadlet(board, 0xa002, flash_command);
+        if (i == 0) {
+            Amp1394_Sleep(0.5);
+        }
+        quadlet_t data;
+        int retries = 0;
+        while ((i & 0xffff) != ((data >> 16) & 0xffff)) {
+            Amp1394_Sleep(0.002);
+            Port->ReadQuadlet(board, 0xa031, data);
+            retries++;
+            // printf("... %x %x: %x\n", i, (data >> 16) & 0xffff, data & 0xffff);            
+            if (retries > 10) {
+                Amp1394_Sleep(0.01);
+                Port->WriteQuadlet(board, 0xa002, flash_command);
+                retries = 0;
+            }
+        }
+        flash_data[i] = data & 0xffff;
+        printf("%x: %x\n", i, data & 0xffff);
+        if (flash_data[i] != 0xffff) {
 
-    uint32_t fver = Board.GetFirmwareVersion();
-    if (fver < 7) {
-        std::cerr << "Instrument read requires firmware version 7+ (detected version " << fver << ")" << std::endl;
-        Port->RemoveBoard(board);
-        delete Port;
-        return -1;
-    }
-    uint32_t status = Board.ReadStatus();
+            for (size_t j=1; j < 0x100; j++) {
+                int retries_j = 0;
+                flash_command = (1 << 24) | (i + j);
+                Port->WriteQuadlet(board, 0xa002, flash_command);
 
-    // Now, we try to read the Dallas chip. This will also populate the status field.
-    unsigned char buffer[2048];  // Buffer for entire contents of DS2505 memory (2 Kbytes)
-    bool ret = Board.DallasReadMemory(0, (unsigned char *) buffer, sizeof(buffer));
-    if (!Board.DallasReadStatus(status)) {
-        std::cerr << "Failed to read DS2505 status" << std::endl;
-        Port->RemoveBoard(board);
-        delete Port;
-        return -1;
+                while (((i + j) & 0xffff) != ((data >> 16) & 0xffff)) {
+                    Amp1394_Sleep(0.002);
+                    Port->ReadQuadlet(board, 0xa031, data);
+                    retries_j++;
+                    if (retries_j > 10) {
+                        Amp1394_Sleep(0.01);
+                        Port->WriteQuadlet(board, 0xa002, flash_command);
+                        retries_j = 0;
+                    }                    
+                }
+                flash_data[i+j] = data & 0xffff;
+                printf(".. %x: %x\n", i + j, data & 0xffff);
+            }
+        }
+        file.seekp(i * 2);
+        file.write(((char*)flash_data) + i * 2, 0x100 * 2);
     }
-    // No longer need these
-    Port->RemoveBoard(board);
-    delete Port;
-    if ((status & 0x00000001) != 0x00000001) {
-        std::cerr << "DS2505 interface not enabled (hardware problem)" << std::endl;
-        return -1;
-    }
-    unsigned char ds_reset = static_cast<unsigned char>((status & 0x00000006)>>1);
-    if (ds_reset != 1) {
-        std::cerr << "Failed to communicate with DS2505" << std::endl;
-        if (ds_reset == 2)
-            std::cerr << "  - DOUT3 did not reach high state -- is pullup resistor missing?" << std::endl;
-        else if (ds_reset == 3)
-            std::cerr << "  - Did not received ACK from DS2505 -- is dMIB signal jumpered?" << std::endl;
-        return -1;
-    }
-    unsigned char family_code = static_cast<unsigned char>((status&0xFF000000)>>24);
-    if (family_code != 0x0B) {
-        std::cerr << "Unknown device family code: 0x" << std::hex << static_cast<unsigned int>(family_code)
-                  << " (DS2505 should be 0x0B)" << std::endl;
-        return -1;
-    }
-    bool useDS2480B = (status & 0x00008000) == 0x00008000;
-    if (!useDS2480B) {
-        unsigned char rise_time = static_cast<unsigned char>((status&0x00FF0000)>>16);
-        std::cout << "Measured rise time: " << (rise_time/49.152) << " microseconds" << std::endl;
-    }
-    if (!ret) {
-        std::cerr << "Failed to read instrument memory" << std::endl;
-        return -1;
-    }
-    std::ofstream outFile("instrument.txt", std::ios::binary);
-    if (outFile.good()) {
-        outFile.write((char *)buffer, sizeof(buffer));
-        std::cout << "Data written to instrument.txt" << std::endl;
-    }
-    else {
-        std::cerr << "Failed to open instrument.txt for writing" << std::endl;
-        return -1;
-    }
-    outFile.close();
+    auto end = std::chrono::steady_clock::now();
+    printf("speed %f words/s\n", (double) read_len / std::chrono::duration<double>(end - start).count());
+
+    
+    file.close();    
+
     return 0;
 }
+
+// 0 3000
+// 20000 30000
+// 40000 43000
+// 60000 6d000
+// 80000 80500
+// 100000 101000
+// 600400 601000
+// 800000 830000
+// f20000
+// f40000
+// f60000
+// f80000
