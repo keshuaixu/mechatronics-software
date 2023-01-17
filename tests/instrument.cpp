@@ -111,8 +111,13 @@ int main(int argc, char** argv)
     AmpIO Board(board);
     Port->AddBoard(&Board);
     const size_t read_len = 0xffffff;
+    // const size_t read_len = 0x1000;
     static uint16_t flash_data[read_len];
     auto start = std::chrono::steady_clock::now();
+    std::ofstream file0("espm_flash_dump.bin", std::ios::binary);
+    file0.seekp(read_len * sizeof(uint16_t));
+    file0.write("\0\0", 2);
+    file0.close();
     std::ofstream file("espm_flash_dump.bin", std::ios::binary|std::ios::out|std::ios::in);
     for (size_t i=0; i < read_len; i+=0x100) {
         quadlet_t flash_command = (1 << 24) | i ;
